@@ -290,7 +290,11 @@ func getTimeout(r *http.Request, module config.Module, offset float64) (timeoutS
 	}
 
 	maxTimeoutSeconds := timeoutSeconds - offset
-	if module.Timeout.Seconds() < maxTimeoutSeconds && module.Timeout.Seconds() > 0 || maxTimeoutSeconds < 0 {
+	if maxTimeoutSeconds <= 0 && module.Timeout.Seconds() <= 0 {
+		// The offset would leave no time to probe, so ignore it.
+		return timeoutSeconds, nil
+	}
+	if module.Timeout.Seconds() < maxTimeoutSeconds && module.Timeout.Seconds() > 0 || maxTimeoutSeconds <= 0 {
 		timeoutSeconds = module.Timeout.Seconds()
 	} else {
 		timeoutSeconds = maxTimeoutSeconds
