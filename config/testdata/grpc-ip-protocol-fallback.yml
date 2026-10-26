@@ -1,0 +1,14 @@
+modules:
+  grpc_bare:
+    prober: grpc
+    timeout: 5s
+  grpc_block:
+    prober: grpc
+    timeout: 5s
+    grpc:
+      service: "service1"
+  grpc_fallback_disabled:
+    prober: grpc
+    timeout: 5s
+    grpc:
+      ip_protocol_fallback: false

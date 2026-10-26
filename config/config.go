@@ -45,6 +45,7 @@ var (
 	// DefaultModule set default configuration for the Module
 	DefaultModule = Module{
 		HTTP:      DefaultHTTPProbe,
+		GRPC:      DefaultGRPCProbe,
 		TCP:       DefaultTCPProbe,
 		ICMP:      DefaultICMPProbe,
 		DNS:       DefaultDNSProbe,

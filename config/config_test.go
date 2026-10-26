@@ -329,3 +329,30 @@ modules:
 		t.Errorf("Expected username 'myuser', got '%s'", module.Websocket.HTTPClientConfig.BasicAuth.Username)
 	}
 }
+
+func TestGRPCProbeIPProtocolFallbackDefault(t *testing.T) {
+	sc := NewSafeConfig(prometheus.NewRegistry())
+	if err := sc.ReloadConfig("testdata/grpc-ip-protocol-fallback.yml", nil); err != nil {
+		t.Fatalf("Error loading config: %v", err)
+	}
+
+	tests := []struct {
+		module string
+		want   bool
+	}{
+		{module: "grpc_bare", want: true},
+		{module: "grpc_block", want: true},
+		{module: "grpc_fallback_disabled", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.module, func(t *testing.T) {
+			module, ok := sc.C.Modules[tt.module]
+			if !ok {
+				t.Fatalf("Module %q not found", tt.module)
+			}
+			if got := module.GRPC.IPProtocolFallback; got != tt.want {
+				t.Errorf("Expected IPProtocolFallback %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
