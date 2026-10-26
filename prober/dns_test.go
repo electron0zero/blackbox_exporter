@@ -15,14 +15,19 @@ package prober
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
+	pconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/promslog"
 
 	"github.com/prometheus/blackbox_exporter/config"
@@ -654,4 +659,66 @@ func TestDNSMetrics(t *testing.T) {
 	}
 
 	checkMetrics(expectedMetrics, mfs, t)
+}
+
+func TestDNSOverTLS(t *testing.T) {
+	certExpiry := time.Now().AddDate(0, 0, 1)
+	certTmpl := generateCertificateTemplate(certExpiry, true)
+	certTmpl.IsCA = true
+	_, certPem, key := generateSelfSignedCertificate(certTmpl)
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	serverCert, err := tls.X509KeyPair(certPem, keyPem)
+	if err != nil {
+		t.Fatalf("Error decoding TLS keypair: %s", err)
+	}
+
+	// CAFile must be passed via filesystem.
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, certPem, 0o600); err != nil {
+		t.Fatalf("Error writing CA file: %s", err)
+	}
+
+	ln, err := tls.Listen("tcp4", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{serverCert}})
+	if err != nil {
+		t.Fatalf("Error listening on socket: %s", err)
+	}
+	h := dns.NewServeMux()
+	h.HandleFunc(".", recursiveDNSHandler)
+	server := &dns.Server{Net: "tcp-tls", Listener: ln, Handler: h}
+	go server.ActivateAndServe()
+	defer server.Shutdown()
+
+	tests := []struct {
+		serverName    string
+		ShouldSucceed bool
+	}{
+		{"localhost", true},
+		// Empty falls back to the target IP, which is in the cert's IP SANs.
+		{"", true},
+		{"wrong.example.com", false},
+	}
+
+	for i, test := range tests {
+		module := config.Module{
+			Timeout: time.Second,
+			DNS: config.DNSProbe{
+				IPProtocol:        "ip4",
+				TransportProtocol: "tcp",
+				DNSOverTLS:        true,
+				QueryName:         "example.com",
+				Recursion:         true,
+				TLSConfig: pconfig.TLSConfig{
+					CAFile:     caFile,
+					ServerName: test.serverName,
+				},
+			},
+		}
+		registry := prometheus.NewRegistry()
+		testCTX, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		result := ProbeDNS(testCTX, ln.Addr().String(), module, registry, promslog.NewNopLogger())
+		cancel()
+		if result != test.ShouldSucceed {
+			t.Fatalf("Test %d (server_name %q) had unexpected result: %v", i, test.serverName, result)
+		}
+	}
 }
