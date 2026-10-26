@@ -381,7 +381,12 @@ func ProbeHTTP(ctx context.Context, target string, module config.Module, registr
 
 	targetLower := strings.ToLower(target)
 	if !strings.HasPrefix(targetLower, "http://") && !strings.HasPrefix(targetLower, "https://") {
-		target = "http://" + target
+		if httpConfig.UseHTTP3 {
+			// HTTP/3 only runs over TLS.
+			target = "https://" + target
+		} else {
+			target = "http://" + target
+		}
 	}
 
 	// For HTTP/3, ensure HTTPS is used

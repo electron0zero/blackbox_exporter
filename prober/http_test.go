@@ -2079,6 +2079,43 @@ func TestHTTP3ProbeQUICMixedCaseHTTPScheme(t *testing.T) {
 	}
 }
 
+func TestHTTP3ProbeQUICNoScheme(t *testing.T) {
+	s, serverURL := setupHTTP3Server(t)
+	defer s.Close()
+
+	target := strings.TrimPrefix(serverURL, "https://")
+
+	registry := prometheus.NewRegistry()
+	testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	result := ProbeHTTP(testCTX, target, config.Module{
+		Timeout: 5 * time.Second,
+		HTTP: config.HTTPProbe{
+			IPProtocolFallback: true,
+			UseHTTP3:           true,
+			ValidHTTPVersions:  []string{"HTTP/3.0"},
+			HTTPClientConfig: pconfig.HTTPClientConfig{
+				TLSConfig: pconfig.TLSConfig{InsecureSkipVerify: true},
+			},
+		},
+	}, registry, promslog.NewNopLogger())
+
+	if !result {
+		t.Fatalf("HTTP/3 QUIC probe without scheme failed unexpectedly")
+	}
+
+	mfs, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedResults := map[string]float64{
+		"probe_http_version": 3,
+	}
+	checkRegistryResults(expectedResults, mfs, t)
+}
+
 func generateTLSConfig() (*tls.Config, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
