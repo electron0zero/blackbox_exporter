@@ -122,6 +122,17 @@ func ProbeWebsocket(ctx context.Context, target string, module config.Module, re
 	}
 	defer connection.Close()
 
+	// DialContext only bounds the handshake, so a silent server would block reads past the probe timeout.
+	deadline, _ := ctx.Deadline()
+	if err := connection.SetReadDeadline(deadline); err != nil {
+		logger.Error("Error setting read deadline", "err", err)
+		return false
+	}
+	if err := connection.SetWriteDeadline(deadline); err != nil {
+		logger.Error("Error setting write deadline", "err", err)
+		return false
+	}
+
 	isConnected.Set(1)
 
 	if len(module.Websocket.QueryResponse) > 0 {

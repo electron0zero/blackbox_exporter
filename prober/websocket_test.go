@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	promconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/promslog"
@@ -312,5 +313,52 @@ func TestProbeWebsocket(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestProbeWebsocketTimeout(t *testing.T) {
+	release := make(chan struct{})
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("Failed to upgrade connection: %v", err)
+			return
+		}
+		defer conn.Close()
+		// Stay silent so the probe has to give up on its own deadline.
+		<-release
+	}))
+	defer s.Close()
+	defer close(release)
+	url := strings.Replace(s.URL, "http://", "ws://", 1)
+
+	module := config.Module{
+		Websocket: config.WebsocketProbe{
+			IPProtocol:         "ip4",
+			IPProtocolFallback: true,
+			QueryResponse: []config.QueryResponse{
+				{
+					Expect: config.MustNewRegexp("never"),
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- ProbeWebsocket(ctx, url, module, prometheus.NewRegistry(), promslog.NewNopLogger())
+	}()
+
+	select {
+	case success := <-done:
+		if success {
+			t.Error("Expected probe to fail against a silent server")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("ProbeWebsocket did not return within 3s of a 500ms probe deadline")
 	}
 }
