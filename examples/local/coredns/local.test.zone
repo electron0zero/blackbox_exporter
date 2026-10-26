@@ -1,0 +1,6 @@
+$ORIGIN local.test.
+$TTL 300
+@	IN	SOA	ns.local.test. admin.local.test. 1 3600 600 86400 300
+@	IN	NS	ns.local.test.
+ns	IN	A	127.0.0.1
+www	IN	A	192.0.2.10

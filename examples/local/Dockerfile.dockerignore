@@ -1,0 +1,8 @@
+# Keeps the build context to Go sources so stray binaries and local notes stay out.
+*
+!go.mod
+!go.sum
+!*.go
+!config/
+!prober/
+!blackbox.yml

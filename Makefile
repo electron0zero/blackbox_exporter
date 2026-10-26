@@ -14,3 +14,13 @@
 include Makefile.common
 
 DOCKER_IMAGE_NAME       ?= blackbox-exporter
+
+.PHONY: e2e-local
+e2e-local:
+	@echo ">> running local end-to-end probe tests"
+	./examples/local/test.sh
+
+.PHONY: test-e2e
+test-e2e:
+	@echo ">> running end-to-end tests"
+	$(GO) test -tags e2e -count=1 -timeout 15m ./e2e/

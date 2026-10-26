@@ -1,0 +1,232 @@
+# Modules for the local example. Every module targets a service in compose.yaml.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_body_not_matches_regexp:
+        - "Welcome to nginx"
+  http_2xx_body_mismatch:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_body_not_matches_regexp:
+        - "Download the latest version here"
+  http_2xx_tls:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_not_ssl: true
+      tls_config:
+        ca_file: "/certs/ca.crt"
+  tls_connect:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: "ip4"
+      tls: true
+      tls_config:
+        ca_file: "/certs/ca.crt"
+  tls_connect_untrusted:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: "ip4"
+      tls: true
+  tcp_connect_example:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: "ip4"
+  smtp_starttls:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: "ip4"
+      query_response:
+        - expect: "^220 ([^ ]+) .*ESMTP"
+        - send: "EHLO prober\r"
+        - expect: "^250-STARTTLS"
+        - send: "STARTTLS\r"
+        - expect: "^220"
+        - starttls: true
+        - send: "EHLO prober\r"
+        - expect: "^250-AUTH"
+        - send: "QUIT\r"
+      tls_config:
+        ca_file: "/certs/ca.crt"
+        server_name: "mail"
+  dns_udp_example:
+    prober: dns
+    timeout: 5s
+    dns:
+      preferred_ip_protocol: "ip4"
+      query_name: "www.local.test"
+      query_type: "A"
+      valid_rcodes:
+        - NOERROR
+      validate_answer_rrs:
+        fail_if_not_matches_regexp:
+          - "www.local.test.\t300\tIN\tA\t192.0.2.10"
+  dns_tcp_example:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: "tcp"
+      preferred_ip_protocol: "ip4"
+      query_name: "www.local.test"
+      query_type: "A"
+      validate_answer_rrs:
+        fail_if_not_matches_regexp:
+          - "www.local.test.\t300\tIN\tA\t192.0.2.10"
+  dns_nxdomain:
+    prober: dns
+    timeout: 5s
+    dns:
+      preferred_ip_protocol: "ip4"
+      query_name: "missing.local.test"
+      valid_rcodes:
+        - NOERROR
+  websocket_example:
+    prober: websocket
+    timeout: 5s
+    websocket:
+      query_response:
+        - expect: "^Request served by"
+        - send: "ping"
+        - expect: "^ping$"
+  icmp_example:
+    prober: icmp
+    timeout: 5s
+    icmp:
+      preferred_ip_protocol: "ip4"
+  http_basic_auth:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      basic_auth:
+        username: "admin"
+        password: "secret"
+  http_basic_auth_wrong_password:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      basic_auth:
+        username: "admin"
+        password: "wrong"
+  http_fail_if_ssl:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_ssl: true
+      tls_config:
+        ca_file: "/certs/ca.crt"
+  http_404:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      valid_status_codes:
+        - 404
+  http_header_match:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_header_not_matches:
+        - header: "X-Probe"
+          regexp: "^local$"
+  http_header_mismatch:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_header_not_matches:
+        - header: "X-Probe"
+          regexp: "^remote$"
+  http_json_cel:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_body_json_not_matches_cel: 'body.status == "ok" && body.checks > 2'
+  http_json_cel_mismatch:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      fail_if_body_json_not_matches_cel: 'body.status == "degraded"'
+  http_mtls:
+    prober: http
+    timeout: 5s
+    http:
+      preferred_ip_protocol: "ip4"
+      tls_config:
+        ca_file: "/certs/ca.crt"
+        cert_file: "/certs/client.crt"
+        key_file: "/certs/client.key"
+  tcp_echo:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: "ip4"
+      query_response:
+        - send: "ping"
+        - expect: "^ping$"
+  tcp_echo_mismatch:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: "ip4"
+      query_response:
+        - send: "ping"
+        - expect: "^pong$"
+  dns_over_tls:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: "tcp"
+      dns_over_tls: true
+      preferred_ip_protocol: "ip4"
+      query_name: "www.local.test"
+      query_type: "A"
+      validate_answer_rrs:
+        fail_if_not_matches_regexp:
+          - "www.local.test.\t300\tIN\tA\t192.0.2.10"
+      tls_config:
+        ca_file: "/certs/ca.crt"
+  dns_over_tls_untrusted:
+    prober: dns
+    timeout: 5s
+    dns:
+      transport_protocol: "tcp"
+      dns_over_tls: true
+      preferred_ip_protocol: "ip4"
+      query_name: "www.local.test"
+  dns_answer_mismatch:
+    prober: dns
+    timeout: 5s
+    dns:
+      preferred_ip_protocol: "ip4"
+      query_name: "www.local.test"
+      query_type: "A"
+      validate_answer_rrs:
+        fail_if_not_matches_regexp:
+          - "www.local.test.\t300\tIN\tA\t192.0.2.99"
+  grpc_plain:
+    prober: grpc
+    timeout: 5s
+    grpc:
+      preferred_ip_protocol: "ip4"
+  grpc_unknown_service:
+    prober: grpc
+    timeout: 5s
+    grpc:
+      preferred_ip_protocol: "ip4"
+      service: "no.such.Service"

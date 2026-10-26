@@ -1,0 +1,50 @@
+# Started by TestMain in e2e_test.go. It writes E2E_RUN_DIR (config, web config, its cert, badserver binary) and sets E2E_ARCH.
+name: bbe-e2e
+
+services:
+  blackbox:
+    build:
+      context: ..
+      args:
+        ARCH: ${E2E_ARCH:?}
+    image: blackbox-exporter:e2e
+    command: ["--config.file=/config/blackbox.yml", "--log.prober=debug"]
+    ports:
+      - "127.0.0.1::9115"
+    volumes:
+      - ${E2E_RUN_DIR:?}/config:/config
+      - ${E2E_RUN_DIR:?}/certs:/certs:ro
+    # Raw ICMP sockets, which also allow setting don't-fragment.
+    cap_add:
+      - NET_RAW
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9115/-/healthy"]
+      interval: 1s
+      retries: 30
+
+  # Ports are hardcoded in badserver. The table in badserver/main.go lists them.
+  badserver:
+    image: busybox:1.37
+    command: ["/badserver", "-grpc-ipv6-listen=[fd00:bbe:e2e::10]:9091"]
+    # 8080 is published so tests can read /proxy/requests.
+    ports:
+      - "127.0.0.1::8080"
+    volumes:
+      - ${E2E_RUN_DIR:?}/badserver:/badserver:ro
+    networks:
+      default:
+        # Fixed, so -grpc-ipv6-listen can bind it.
+        ipv6_address: fd00:bbe:e2e::10
+    # badserver opens every port before it serves, so one open port means all are.
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8080"]
+      interval: 1s
+      retries: 30
+
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+        - subnet: fd00:bbe:e2e::/64

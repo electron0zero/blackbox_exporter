@@ -1,0 +1,10 @@
+local.test {
+  file /etc/coredns/local.test.zone
+  log
+}
+
+tls://local.test:853 {
+  tls /certs/server.crt /certs/server.key
+  file /etc/coredns/local.test.zone
+  log
+}
