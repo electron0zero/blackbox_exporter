@@ -617,6 +617,77 @@ func TestGRPCHealthCheckUnimplemented(t *testing.T) {
 	checkRegistryResults(expectedResults, mfs, t)
 }
 
+// slowHealthServer stalls Check for one service to simulate a hung backend.
+type slowHealthServer struct {
+	*health.Server
+	slowService string
+}
+
+func (s *slowHealthServer) Check(ctx context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	if req.GetService() != s.slowService {
+		return s.Server.Check(ctx, req)
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	// Bounds the stall so a probe ignoring its deadline still returns.
+	case <-time.After(5 * time.Second):
+		return &grpc_health_v1.HealthCheckResponse{Status: grpc_health_v1.HealthCheckResponse_SERVING}, nil
+	}
+}
+
+func TestGRPCHealthCheckTimeout(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Error listening on socket: %s", err)
+	}
+	defer ln.Close()
+
+	s := grpc.NewServer()
+	grpc_health_v1.RegisterHealthServer(s, &slowHealthServer{Server: health.NewServer(), slowService: "slow"})
+
+	go func() {
+		if err := s.Serve(ln); err != nil {
+			t.Errorf("failed to serve: %v", err)
+			return
+		}
+	}()
+	defer s.GracefulStop()
+
+	timeout := time.Second
+	testCTX, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	registry := prometheus.NewRegistry()
+
+	start := time.Now()
+	result := ProbeGRPC(testCTX, ln.Addr().String(),
+		config.Module{
+			Timeout: timeout, GRPC: config.GRPCProbe{
+				PreferredIPProtocol: "ip4",
+				Service:             "slow",
+			},
+		}, registry, promslog.NewNopLogger())
+	elapsed := time.Since(start)
+
+	if result {
+		t.Fatalf("GRPC probe succeeded, should have timed out")
+	}
+	if elapsed > timeout+time.Second {
+		t.Fatalf("GRPC probe took %s, expected to give up after about %s", elapsed, timeout)
+	}
+
+	mfs, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedResults := map[string]float64{
+		"probe_grpc_status_code": 4, // DEADLINE_EXCEEDED
+	}
+
+	checkRegistryResults(expectedResults, mfs, t)
+}
+
 func TestGRPCAbsentFailedTLS(t *testing.T) {
 	testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

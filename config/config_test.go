@@ -22,12 +22,79 @@ import (
 )
 
 func TestLoadConfig(t *testing.T) {
-	sc := NewSafeConfig(prometheus.NewRegistry())
-
-	err := sc.ReloadConfig("testdata/blackbox-good.yml", nil)
-	if err != nil {
-		t.Errorf("Error loading config %v: %v", "blackbox.yml", err)
+	tests := []string{
+		"testdata/blackbox-good.yml",
+		// Shipped configs must keep passing --config.check.
+		"../blackbox.yml",
+		"../example.yml",
 	}
+	for _, input := range tests {
+		t.Run(input, func(t *testing.T) {
+			sc := NewSafeConfig(prometheus.NewRegistry())
+
+			err := sc.ReloadConfig(input, nil)
+			if err != nil {
+				t.Errorf("Error loading config %v: %v", input, err)
+			}
+			if len(sc.C.Modules) == 0 {
+				t.Errorf("Config %v loaded without modules", input)
+			}
+		})
+	}
+}
+
+func TestReloadConfigKeepsOldConfigOnError(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	sc := NewSafeConfig(reg)
+
+	if err := sc.ReloadConfig("testdata/blackbox-good.yml", nil); err != nil {
+		t.Fatalf("Error loading config %v: %v", "testdata/blackbox-good.yml", err)
+	}
+	if got := lastReloadSuccessful(t, reg); got != 1 {
+		t.Errorf("config_last_reload_successful = %v after good reload; want 1", got)
+	}
+	sc.RLock()
+	good := sc.C
+	sc.RUnlock()
+
+	if err := sc.ReloadConfig("testdata/blackbox-bad.yml", nil); err == nil {
+		t.Fatalf("ReloadConfig(%q) = nil; want error", "testdata/blackbox-bad.yml")
+	}
+	sc.RLock()
+	got := sc.C
+	sc.RUnlock()
+	if got != good {
+		t.Errorf("Config replaced by failed reload")
+	}
+	if _, ok := got.Modules["http_2xx"]; !ok {
+		t.Errorf("Module http_2xx missing after failed reload")
+	}
+	if got := lastReloadSuccessful(t, reg); got != 0 {
+		t.Errorf("config_last_reload_successful = %v after bad reload; want 0", got)
+	}
+
+	if err := sc.ReloadConfig("testdata/blackbox-good.yml", nil); err != nil {
+		t.Fatalf("Error loading config %v: %v", "testdata/blackbox-good.yml", err)
+	}
+	if got := lastReloadSuccessful(t, reg); got != 1 {
+		t.Errorf("config_last_reload_successful = %v after recovering reload; want 1", got)
+	}
+}
+
+func lastReloadSuccessful(t *testing.T, reg *prometheus.Registry) float64 {
+	t.Helper()
+
+	mfs, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Error gathering metrics: %v", err)
+	}
+	for _, mf := range mfs {
+		if mf.GetName() == "blackbox_exporter_config_last_reload_successful" {
+			return mf.GetMetric()[0].GetGauge().GetValue()
+		}
+	}
+	t.Fatal("blackbox_exporter_config_last_reload_successful not registered")
+	return 0
 }
 
 func TestLoadBadConfigs(t *testing.T) {

@@ -15,6 +15,7 @@ package prober
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -183,5 +184,59 @@ func TestHistoryGetByTargetAndModule(t *testing.T) {
 		if result.ModuleName != "module-1" {
 			t.Errorf("Error finding the result in history by target and module for target: expected \"%s\" and got \"%s\"", "module-1", result.ModuleName)
 		}
+	}
+}
+
+func TestHistoryConcurrentAddAndList(t *testing.T) {
+	const (
+		maxResults    = 5
+		writers       = 8
+		addsPerWriter = 200
+	)
+	history := &ResultHistory{MaxResults: maxResults}
+
+	var wg sync.WaitGroup
+	for w := range writers {
+		wg.Go(func() {
+			for i := range addsPerWriter {
+				history.Add("module", fmt.Sprintf("target-%d", w), fmt.Sprintf("result %d", i), i%2 == 0)
+			}
+		})
+		wg.Go(func() {
+			for range addsPerWriter {
+				savedResults := history.List()
+				if len(savedResults) > 2*maxResults {
+					t.Errorf("History grew past its bound: got %d results, want at most %d", len(savedResults), 2*maxResults)
+					return
+				}
+				for _, r := range savedResults {
+					if r == nil {
+						t.Error("History listed a nil result")
+						return
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
+
+	savedResults := history.List()
+	if len(savedResults) != 2*maxResults {
+		t.Fatalf("History contained %d results, want %d", len(savedResults), 2*maxResults)
+	}
+	for i, r := range savedResults[:maxResults] {
+		if r.Success {
+			t.Errorf("Preserved result at index %d is a success, want a failure", i)
+		}
+	}
+	seen := map[int64]bool{}
+	for _, r := range savedResults {
+		if seen[r.ID] {
+			t.Errorf("History contained duplicate result ID %d", r.ID)
+		}
+		seen[r.ID] = true
+	}
+	if last := savedResults[len(savedResults)-1].ID; last != writers*addsPerWriter-1 {
+		t.Errorf("Latest result ID = %d, want %d", last, writers*addsPerWriter-1)
 	}
 }

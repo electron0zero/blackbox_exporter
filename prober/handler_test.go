@@ -153,6 +153,21 @@ func TestDebugOutputScrapeLoggerLevels(t *testing.T) {
 					t.Errorf("Expected no debug level log, but a debug level entry was found. Logs: %s\n", out)
 				}
 			}
+
+			// Derived handlers must keep attrs, groups and the level split in both sinks.
+			derived := slLogger.With("attr_key", "attr_val").WithGroup("grp")
+			derived.Info("derived info", "k", "v")
+			derived.Debug("derived debug", "k", "v")
+			for sink, out := range map[string]string{"logger": buf.String(), "debug output": sl.buffer.String()} {
+				for _, want := range []string{`msg="derived info"`, "attr_key=attr_val", "grp.k=v", "module=http_2xx"} {
+					if !strings.Contains(out, want) {
+						t.Errorf("Expected %q in %s, but none found. Logs: %s\n", want, sink, out)
+					}
+				}
+				if got := strings.Contains(out, `msg="derived debug"`); got != tc.debugExpected {
+					t.Errorf("Derived debug log present in %s = %t, want %t. Logs: %s\n", sink, got, tc.debugExpected, out)
+				}
+			}
 		})
 	}
 }

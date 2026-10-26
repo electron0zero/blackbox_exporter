@@ -70,6 +70,44 @@ func TestTCPConnectionFails(t *testing.T) {
 	}
 }
 
+func TestTCPSourceIPAddress(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Error listening on socket: %s", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			conn.Close()
+		}
+	}()
+
+	tests := []struct {
+		sourceIP      string
+		ShouldSucceed bool
+	}{
+		{"127.0.0.1", true},
+		// TEST-NET-1 is never assigned locally, so binding to it must fail.
+		{"192.0.2.1", false},
+	}
+
+	for _, test := range tests {
+		testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		registry := prometheus.NewRegistry()
+		module := config.Module{TCP: config.TCPProbe{IPProtocol: "ip4", SourceIPAddress: test.sourceIP}}
+		result := ProbeTCP(testCTX, ln.Addr().String(), module, registry, promslog.NewNopLogger())
+		if result != test.ShouldSucceed {
+			t.Fatalf("TCP module with source_ip_address %s had unexpected result: %v", test.sourceIP, result)
+		}
+	}
+}
+
 func TestTCPConnectionWithTLS(t *testing.T) {
 	if os.Getenv("CI") == "true" {
 		t.Skip("skipping; CI is failing on ipv6 dns requests")

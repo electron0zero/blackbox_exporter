@@ -169,6 +169,12 @@ func TestProbeWebsocket(t *testing.T) {
 	defer sSSL.Close()
 	sURL := strings.Replace(sSSL.URL, "https://", "wss://", 1)
 
+	sForbidden := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer sForbidden.Close()
+	forbiddenURL := strings.Replace(sForbidden.URL, "http://", "ws://", 1)
+
 	testCases := []testCase{
 		{
 			url: url,
@@ -265,6 +271,19 @@ func TestProbeWebsocket(t *testing.T) {
 				"probe_websocket_failed_due_to_regex": 0,
 			},
 			expectedSuccess: true,
+		},
+		{
+			url: forbiddenURL,
+			module: config.Module{
+				Websocket: config.WebsocketProbe{
+					IPProtocolFallback: true,
+				},
+			},
+			expected: map[string]float64{
+				"probe_websocket_status_code":         403,
+				"probe_websocket_connection_upgraded": 0,
+			},
+			expectedSuccess: false,
 		},
 	}
 

@@ -121,6 +121,51 @@ func TestValidHTTPVersion(t *testing.T) {
 	}
 }
 
+func TestEnableHTTP2(t *testing.T) {
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	}))
+	ts.EnableHTTP2 = true
+	ts.StartTLS()
+	defer ts.Close()
+
+	tests := map[string]struct {
+		enableHTTP2 bool
+		wantSuccess bool
+		wantVersion float64
+	}{
+		"enabled":  {enableHTTP2: true, wantSuccess: true, wantVersion: 2},
+		"disabled": {enableHTTP2: false, wantSuccess: false, wantVersion: 1.1},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			registry := prometheus.NewRegistry()
+			testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var logbuf bytes.Buffer
+			result := ProbeHTTP(testCTX, ts.URL,
+				config.Module{Timeout: time.Second, HTTP: config.HTTPProbe{
+					IPProtocolFallback: true,
+					ValidHTTPVersions:  []string{"HTTP/2.0"},
+					HTTPClientConfig: pconfig.HTTPClientConfig{
+						EnableHTTP2: tc.enableHTTP2,
+						TLSConfig:   pconfig.TLSConfig{InsecureSkipVerify: true},
+					},
+				}}, registry, promslog.New(&promslog.Config{Writer: &logbuf}))
+			if result != tc.wantSuccess {
+				t.Fatalf("Expected success=%v, got=%v: %s", tc.wantSuccess, result, logbuf.String())
+			}
+			mfs, err := registry.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			expectedResults := map[string]float64{
+				"probe_http_version": tc.wantVersion,
+			}
+			checkRegistryResults(expectedResults, mfs, t)
+		})
+	}
+}
+
 func TestContentLength(t *testing.T) {
 	type testdata struct {
 		msg                    []byte
@@ -827,6 +872,50 @@ func TestBearerToken(t *testing.T) {
 	}
 }
 
+func TestOAuth2(t *testing.T) {
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"access_token":"x","token_type":"Bearer"}`))
+	}))
+	defer tokenServer.Close()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer x" {
+			w.WriteHeader(http.StatusUnauthorized)
+		}
+	}))
+	defer ts.Close()
+
+	tests := map[string]struct {
+		oauth2      *pconfig.OAuth2
+		wantSuccess bool
+	}{
+		"with oauth2": {
+			oauth2:      &pconfig.OAuth2{ClientID: "id", ClientSecret: "secret", TokenURL: tokenServer.URL},
+			wantSuccess: true,
+		},
+		"without oauth2": {wantSuccess: false},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			registry := prometheus.NewRegistry()
+			testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var logbuf bytes.Buffer
+			result := ProbeHTTP(testCTX, ts.URL,
+				config.Module{Timeout: time.Second, HTTP: config.HTTPProbe{
+					IPProtocolFallback: true,
+					HTTPClientConfig: pconfig.HTTPClientConfig{
+						OAuth2: tc.oauth2,
+					},
+				}}, registry, promslog.New(&promslog.Config{Writer: &logbuf}))
+			if result != tc.wantSuccess {
+				t.Fatalf("Expected success=%v, got=%v: %s", tc.wantSuccess, result, logbuf.String())
+			}
+		})
+	}
+}
+
 func TestFailIfNotSSL(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
 	}))
@@ -850,6 +939,50 @@ func TestFailIfNotSSL(t *testing.T) {
 		"probe_http_ssl": 0,
 	}
 	checkRegistryResults(expectedResults, mfs, t)
+}
+
+func TestFailIfSSL(t *testing.T) {
+	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	}))
+	defer tlsServer.Close()
+	plainServer := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	}))
+	defer plainServer.Close()
+
+	tests := map[string]struct {
+		url         string
+		wantSuccess bool
+		wantSSL     float64
+	}{
+		"TLS server":   {url: tlsServer.URL, wantSuccess: false, wantSSL: 1},
+		"plain server": {url: plainServer.URL, wantSuccess: true, wantSSL: 0},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			registry := prometheus.NewRegistry()
+			testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			result := ProbeHTTP(testCTX, tc.url,
+				config.Module{Timeout: time.Second, HTTP: config.HTTPProbe{
+					IPProtocolFallback: true,
+					FailIfSSL:          true,
+					HTTPClientConfig: pconfig.HTTPClientConfig{
+						TLSConfig: pconfig.TLSConfig{InsecureSkipVerify: true},
+					},
+				}}, registry, promslog.NewNopLogger())
+			if result != tc.wantSuccess {
+				t.Fatalf("Expected success=%v, got=%v", tc.wantSuccess, result)
+			}
+			mfs, err := registry.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			expectedResults := map[string]float64{
+				"probe_http_ssl": tc.wantSSL,
+			}
+			checkRegistryResults(expectedResults, mfs, t)
+		})
+	}
 }
 
 type logRecorder struct {
@@ -1572,6 +1705,142 @@ func TestHTTPUsesTargetAsTLSServerName(t *testing.T) {
 	}
 }
 
+func TestHTTPTLSHandshake(t *testing.T) {
+	certExpiry := time.Now().AddDate(0, 0, 1)
+	rootTmpl := generateCertificateTemplate(certExpiry, false)
+	rootTmpl.IsCA = true
+	rootCert, rootPem, rootKey := generateSelfSignedCertificate(rootTmpl)
+	rootPool := x509.NewCertPool()
+	rootPool.AddCert(rootCert)
+
+	leafCert, _, leafKey := generateSignedCertificate(generateCertificateTemplate(certExpiry, true), rootCert, rootKey)
+
+	expiredTmpl := generateCertificateTemplate(time.Now().AddDate(0, 0, -1), true)
+	expiredTmpl.NotBefore = time.Now().AddDate(0, 0, -2)
+	expiredCert, _, expiredKey := generateSignedCertificate(expiredTmpl, rootCert, rootKey)
+
+	intermediateTmpl := generateCertificateTemplate(certExpiry, false)
+	intermediateTmpl.IsCA = true
+	intermediateCert, _, intermediateKey := generateSignedCertificate(intermediateTmpl, rootCert, rootKey)
+	chainedLeafCert, _, chainedLeafKey := generateSignedCertificate(generateCertificateTemplate(certExpiry, true), intermediateCert, intermediateKey)
+
+	_, clientPem, clientKey := generateSignedCertificate(generateCertificateTemplate(certExpiry, false), rootCert, rootKey)
+
+	dir := t.TempDir()
+	caFile := dir + "/ca.pem"
+	certFile := dir + "/client.pem"
+	keyFile := dir + "/client-key.pem"
+	for name, data := range map[string][]byte{
+		caFile:   rootPem,
+		certFile: clientPem,
+		keyFile:  pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(clientKey)}),
+	} {
+		if err := os.WriteFile(name, data, 0o600); err != nil {
+			t.Fatalf("Error writing %s: %s", name, err)
+		}
+	}
+
+	leaf := []tls.Certificate{serverTLSCert(leafKey, leafCert)}
+	tests := map[string]struct {
+		server      *tls.Config
+		client      pconfig.TLSConfig
+		wantSuccess bool
+		wantVersion string
+		wantLog     string
+	}{
+		"TLS 1.2 only server": {
+			server:      &tls.Config{Certificates: leaf, MaxVersion: tls.VersionTLS12},
+			wantSuccess: true,
+			wantVersion: "TLS 1.2",
+		},
+		"TLS 1.3 only server": {
+			server:      &tls.Config{Certificates: leaf, MinVersion: tls.VersionTLS13},
+			wantSuccess: true,
+			wantVersion: "TLS 1.3",
+		},
+		"max_version TLS12 against TLS 1.3 only server": {
+			server:  &tls.Config{Certificates: leaf, MinVersion: tls.VersionTLS13},
+			client:  pconfig.TLSConfig{MaxVersion: tls.VersionTLS12},
+			wantLog: "protocol version",
+		},
+		"min_version TLS13 against TLS 1.2 only server": {
+			server:  &tls.Config{Certificates: leaf, MaxVersion: tls.VersionTLS12},
+			client:  pconfig.TLSConfig{MinVersion: tls.VersionTLS13},
+			wantLog: "protocol version",
+		},
+		"expired leaf": {
+			server:  &tls.Config{Certificates: []tls.Certificate{serverTLSCert(expiredKey, expiredCert)}},
+			wantLog: "certificate has expired",
+		},
+		"intermediate not sent": {
+			server:  &tls.Config{Certificates: []tls.Certificate{serverTLSCert(chainedLeafKey, chainedLeafCert)}},
+			wantLog: "unknown authority",
+		},
+		"intermediate sent": {
+			server:      &tls.Config{Certificates: []tls.Certificate{serverTLSCert(chainedLeafKey, chainedLeafCert, intermediateCert)}},
+			wantSuccess: true,
+			wantVersion: "TLS 1.3",
+		},
+		// Go 1.27 removed RSA key exchange, see https://github.com/prometheus/blackbox_exporter/issues/1437.
+		"RSA key exchange only server": {
+			server: &tls.Config{
+				Certificates: leaf,
+				CipherSuites: []uint16{tls.TLS_RSA_WITH_AES_128_GCM_SHA256},
+				MaxVersion:   tls.VersionTLS12,
+			},
+			wantLog: "handshake failure",
+		},
+		"client cert required and sent": {
+			server:      &tls.Config{Certificates: leaf, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: rootPool},
+			client:      pconfig.TLSConfig{CertFile: certFile, KeyFile: keyFile},
+			wantSuccess: true,
+			wantVersion: "TLS 1.3",
+		},
+		"client cert required and not sent": {
+			server:  &tls.Config{Certificates: leaf, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: rootPool},
+			wantLog: "certificate required",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			ts := httptest.NewUnstartedServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+			}))
+			ts.TLS = tc.server
+			ts.StartTLS()
+			defer ts.Close()
+
+			tc.client.CAFile = caFile
+			registry := prometheus.NewRegistry()
+			testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			var logbuf bytes.Buffer
+			result := ProbeHTTP(testCTX, ts.URL,
+				config.Module{Timeout: time.Second, HTTP: config.HTTPProbe{
+					IPProtocolFallback: true,
+					HTTPClientConfig: pconfig.HTTPClientConfig{
+						TLSConfig: tc.client,
+					},
+				}}, registry, promslog.New(&promslog.Config{Writer: &logbuf}))
+			if result != tc.wantSuccess {
+				t.Fatalf("Expected success=%v, got=%v: %s", tc.wantSuccess, result, logbuf.String())
+			}
+			if !strings.Contains(logbuf.String(), tc.wantLog) {
+				t.Fatalf("Expected log to contain %q, got: %s", tc.wantLog, logbuf.String())
+			}
+			if !tc.wantSuccess {
+				return
+			}
+			mfs, err := registry.Gather()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if val, ok := getMetricWithLabels(mfs, "probe_tls_version_info", map[string]string{"version": tc.wantVersion}); !ok || val != 1 {
+				t.Fatalf("Expected probe_tls_version_info{version=%q} 1, got %v (found=%v)", tc.wantVersion, val, ok)
+			}
+		})
+	}
+}
+
 func TestHTTPCRLUnreachableReportsUnavailable(t *testing.T) {
 	// CRL responder that hangs until the probe context is cancelled,
 	// reproducing a "context deadline exceeded" during the CRL fetch.
@@ -1650,7 +1919,9 @@ func TestRedirectToTLSHostWorks(t *testing.T) {
 }
 
 func TestHTTPPhases(t *testing.T) {
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {
+	lastModified := time.Unix(1700000000, 0)
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Last-Modified", lastModified.UTC().Format(http.TimeFormat))
 	}))
 	defer ts.Close()
 
@@ -1689,6 +1960,14 @@ func TestHTTPPhases(t *testing.T) {
 	}
 
 	checkMetrics(expectedMetrics, mfs, t)
+
+	expectedResults := map[string]float64{
+		"probe_http_last_modified_timestamp_seconds": float64(lastModified.Unix()),
+	}
+	checkRegistryResults(expectedResults, mfs, t)
+	if val, ok := getMetricValue(mfs, "probe_ip_addr_hash"); !ok || val == 0 {
+		t.Fatalf("Expected non-zero probe_ip_addr_hash, got %v (found=%v)", val, ok)
+	}
 }
 
 func TestCookieJar(t *testing.T) {

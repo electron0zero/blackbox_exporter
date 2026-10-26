@@ -15,14 +15,20 @@ package prober
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/miekg/dns"
 	"github.com/prometheus/client_golang/prometheus"
+	pconfig "github.com/prometheus/common/config"
 	"github.com/prometheus/common/promslog"
 
 	"github.com/prometheus/blackbox_exporter/config"
@@ -654,4 +660,161 @@ func TestDNSMetrics(t *testing.T) {
 	}
 
 	checkMetrics(expectedMetrics, mfs, t)
+}
+
+func TestDNSOverTLS(t *testing.T) {
+	certExpiry := time.Now().AddDate(0, 0, 1)
+	certTmpl := generateCertificateTemplate(certExpiry, true)
+	certTmpl.IsCA = true
+	_, certPem, key := generateSelfSignedCertificate(certTmpl)
+	keyPem := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	serverCert, err := tls.X509KeyPair(certPem, keyPem)
+	if err != nil {
+		t.Fatalf("Error decoding TLS keypair: %s", err)
+	}
+
+	// CAFile must be passed via filesystem.
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, certPem, 0o600); err != nil {
+		t.Fatalf("Error writing CA file: %s", err)
+	}
+
+	ln, err := tls.Listen("tcp4", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{serverCert}})
+	if err != nil {
+		t.Fatalf("Error listening on socket: %s", err)
+	}
+	h := dns.NewServeMux()
+	h.HandleFunc(".", recursiveDNSHandler)
+	server := &dns.Server{Net: "tcp-tls", Listener: ln, Handler: h}
+	go server.ActivateAndServe()
+	defer server.Shutdown()
+
+	tests := []struct {
+		serverName    string
+		ShouldSucceed bool
+	}{
+		{"localhost", true},
+		// Empty falls back to the target IP, which is in the cert's IP SANs.
+		{"", true},
+		{"wrong.example.com", false},
+	}
+
+	for i, test := range tests {
+		module := config.Module{
+			Timeout: time.Second,
+			DNS: config.DNSProbe{
+				IPProtocol:        "ip4",
+				TransportProtocol: "tcp",
+				DNSOverTLS:        true,
+				QueryName:         "example.com",
+				Recursion:         true,
+				TLSConfig: pconfig.TLSConfig{
+					CAFile:     caFile,
+					ServerName: test.serverName,
+				},
+			},
+		}
+		registry := prometheus.NewRegistry()
+		testCTX, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		result := ProbeDNS(testCTX, ln.Addr().String(), module, registry, promslog.NewNopLogger())
+		cancel()
+		if result != test.ShouldSucceed {
+			t.Fatalf("Test %d (server_name %q) had unexpected result: %v", i, test.serverName, result)
+		}
+	}
+}
+
+// truncatingTXTDNSHandler answers with a TXT record too large for a plain UDP response.
+func truncatingTXTDNSHandler(w dns.ResponseWriter, r *dns.Msg) {
+	m := new(dns.Msg)
+	m.SetReply(r)
+	m.Answer = append(m.Answer, &dns.TXT{
+		Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeTXT, Class: dns.ClassINET, Ttl: 3600},
+		Txt: []string{strings.Repeat("a", 255), strings.Repeat("b", 255), strings.Repeat("c", 255)},
+	})
+	if _, ok := w.LocalAddr().(*net.UDPAddr); ok {
+		m.Truncate(dns.MinMsgSize)
+	}
+	if err := w.WriteMsg(m); err != nil {
+		panic(err)
+	}
+}
+
+func TestDNSTruncatedResponse(t *testing.T) {
+	tests := []struct {
+		protocol  string
+		answerRRs float64
+	}{
+		// The TC flag is not surfaced or retried over TCP, see #1258.
+		{"udp", 0},
+		{"tcp", 1},
+	}
+
+	for _, test := range tests {
+		server, addr := startDNSServer(test.protocol, truncatingTXTDNSHandler)
+		defer server.Shutdown()
+		_, port, _ := net.SplitHostPort(addr.String())
+
+		module := config.Module{
+			Timeout: time.Second,
+			DNS: config.DNSProbe{
+				IPProtocol:        "ip4",
+				TransportProtocol: test.protocol,
+				QueryName:         "example.com",
+				QueryType:         "TXT",
+			},
+		}
+		registry := prometheus.NewRegistry()
+		testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if !ProbeDNS(testCTX, net.JoinHostPort("127.0.0.1", port), module, registry, promslog.NewNopLogger()) {
+			t.Fatalf("DNS protocol %s probe failed, expected success.", test.protocol)
+		}
+		mfs, err := registry.Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedResults := map[string]float64{
+			"probe_dns_answer_rrs":      test.answerRRs,
+			"probe_dns_query_succeeded": 1,
+		}
+		checkRegistryResults(expectedResults, mfs, t)
+	}
+}
+
+func TestDNSSourceIPAddress(t *testing.T) {
+	tests := []struct {
+		sourceIP      string
+		ShouldSucceed bool
+	}{
+		{"127.0.0.1", true},
+		// TEST-NET-1 is never assigned locally, so binding to it must fail.
+		{"192.0.2.1", false},
+	}
+
+	for _, protocol := range PROTOCOLS {
+		server, addr := startDNSServer(protocol, recursiveDNSHandler)
+		defer server.Shutdown()
+		_, port, _ := net.SplitHostPort(addr.String())
+
+		for _, test := range tests {
+			module := config.Module{
+				Timeout: time.Second,
+				DNS: config.DNSProbe{
+					IPProtocol:        "ip4",
+					TransportProtocol: protocol,
+					SourceIPAddress:   test.sourceIP,
+					QueryName:         "example.com",
+					Recursion:         true,
+				},
+			}
+			registry := prometheus.NewRegistry()
+			testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			result := ProbeDNS(testCTX, net.JoinHostPort("127.0.0.1", port), module, registry, promslog.NewNopLogger())
+			if result != test.ShouldSucceed {
+				t.Fatalf("DNS protocol %s with source_ip_address %s had unexpected result: %v", protocol, test.sourceIP, result)
+			}
+		}
+	}
 }
