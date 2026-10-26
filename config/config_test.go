@@ -129,6 +129,10 @@ func TestLoadBadConfigs(t *testing.T) {
 			want:  `error parsing config file: setting body and body_file both are not allowed`,
 		},
 		{
+			input: "testdata/invalid-http-body-regexp-and-cel.yml",
+			want:  `error parsing config file: fail_if_body_(not_)matches_regexp and fail_if_body_json_(not_)matches_cel are mutually exclusive`,
+		},
+		{
 			input: "testdata/invalid-tcp-check-revoked-without-tls.yml",
 			want:  `error parsing config file: check_revoked cannot be used when tls is false and no query_response step uses starttls`,
 		},

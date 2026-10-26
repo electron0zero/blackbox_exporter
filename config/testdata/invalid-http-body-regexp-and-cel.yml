@@ -1,0 +1,8 @@
+modules:
+  http_test:
+    prober: http
+    timeout: 5s
+    http:
+      fail_if_body_not_matches_regexp:
+        - "ok"
+      fail_if_body_json_not_matches_cel: 'body.status == "ok"'

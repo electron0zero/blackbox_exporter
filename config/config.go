@@ -475,6 +475,11 @@ func (s *HTTPProbe) UnmarshalYAML(unmarshal func(any) error) error {
 		return errors.New("setting body and body_file both are not allowed")
 	}
 
+	// Both matchers consume the response body, so the second one would see an empty stream.
+	if (len(s.FailIfBodyMatchesRegexp) > 0 || len(s.FailIfBodyNotMatchesRegexp) > 0) && (s.FailIfBodyJSONMatchesCEL != nil || s.FailIfBodyJSONNotMatchesCEL != nil) {
+		return errors.New("fail_if_body_(not_)matches_regexp and fail_if_body_json_(not_)matches_cel are mutually exclusive")
+	}
+
 	for key, value := range s.Headers {
 		switch textproto.CanonicalMIMEHeaderKey(key) {
 		case "Accept-Encoding":

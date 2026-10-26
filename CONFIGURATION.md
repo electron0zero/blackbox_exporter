@@ -128,12 +128,14 @@ then a single address is selected to test, using the following logic:
   [ fail_if_not_ssl: <boolean> | default = false ]
 
   # Probe fails if response body JSON matches the CEL expression or if response is not JSON. See: https://github.com/google/cel-spec:
+  # The CEL fields are mutually exclusive with `fail_if_body_matches_regexp` and `fail_if_body_not_matches_regexp`.
   fail_if_body_json_matches_cel: <string>
 
   # Probe fails if response body JSON does not match CEL expression or if response is not JSON. See: https://github.com/google/cel-spec:
   fail_if_body_json_not_matches_cel: <string>
 
   # Probe fails if response body matches regex.
+  # The regex fields are mutually exclusive with `fail_if_body_json_matches_cel` and `fail_if_body_json_not_matches_cel`.
   fail_if_body_matches_regexp:
     [ - <regex>, ... ]
 
