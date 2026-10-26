@@ -13,6 +13,7 @@ Generic placeholders are defined as follows:
 * `<string>`: a regular string
 * `<secret>`: a regular string that is a secret, such as a password
 * `<regex>`: a regular expression
+* `<size>`: a size in bytes, e.g. `512MB`. A unit is required. Supported units: B, KB, MB, GB, TB, PB, EB, and KiB, MiB, GiB, TiB, PiB, EiB. All units are base 2, so `1KB` and `1KiB` are both 1024 bytes
 
 The other placeholders are specified separately.
 
@@ -55,8 +56,8 @@ then a single address is selected to test, using the following logic:
 ### `<module>`
 ```yml
 
-  # The protocol over which the probe will take place (http, tcp, dns, icmp, grpc, unix).
-  prober: <prober_string>
+  # The protocol over which the probe will take place (http, tcp, dns, icmp, grpc, unix, websocket).
+  prober: <string>
 
   # How long the probe will wait before giving up.
   [ timeout: <duration> ]
@@ -79,6 +80,7 @@ then a single address is selected to test, using the following logic:
   [ valid_status_codes: [<int>, ...] | default = 2xx ]
 
   # Accepted HTTP versions for this probe.
+  # `HTTP/3.0` is only accepted when `enable_http3` is true.
   [ valid_http_versions: <string>, ... ]
 
   # The HTTP method the probe will use.
@@ -91,6 +93,8 @@ then a single address is selected to test, using the following logic:
   # Additional HTTP headers that can be injected into the request.
   # Can be used with values, secrets or files. When multiple types
   # or values are specified for a header, only the last one will be injected.
+  # Reserved headers such as Authorization, Host, User-Agent and Accept-Encoding
+  # cannot be set here.
   http_headers:
     [ <string>:
       [ values: <string>, ... ],
@@ -160,6 +164,9 @@ then a single address is selected to test, using the following logic:
   [ check_revoked: <boolean> | default = false ]
 
   # The HTTP basic authentication credentials.
+  # At most one of `basic_auth`, `authorization` and `oauth2` can be set.
+  # `username` and `username_file` are mutually exclusive, and so are
+  # `password` and `password_file`.
   basic_auth:
     [ username: <string> ]
     [ password: <secret> ]
@@ -169,8 +176,9 @@ then a single address is selected to test, using the following logic:
   # Sets the `Authorization` header on every request with
   # the configured credentials.
   authorization:
-    # Sets the authentication type of the request.
-    [ type: <string> | default: Bearer ]
+    # Sets the authentication type of the request. It cannot be `basic`, use
+    # `basic_auth` instead.
+    [ type: <string> | default = "Bearer" ]
     # Sets the credentials of the request. It is mutually exclusive with
     # `credentials_file`.
     [ credentials: <secret> ]
@@ -182,11 +190,13 @@ then a single address is selected to test, using the following logic:
   [ proxy_url: <string> ]
   # Comma-separated string that can contain IPs, CIDR notation, domain names
   # that should be excluded from proxying. IP and domain names can
-  # contain port numbers.
+  # contain port numbers. Requires `proxy_url`.
   [ no_proxy: <string> ]
-  # Use proxy URL indicated by environment variables (HTTP_PROXY, https_proxy, HTTPs_PROXY, https_proxy, and no_proxy)
-  [ proxy_from_environment: <bool> | default: false ]
+  # Use proxy URL indicated by environment variables (HTTP_PROXY, HTTPS_PROXY and NO_PROXY, or their lowercase forms).
+  # It is mutually exclusive with `proxy_url` and `no_proxy`.
+  [ proxy_from_environment: <boolean> | default = false ]
   # Specifies headers to send to proxies during CONNECT requests.
+  # Requires `proxy_url` or `proxy_from_environment`.
   [ proxy_connect_header:
     [ <string>: [<secret>, ...] ] ]
 
@@ -198,13 +208,13 @@ then a single address is selected to test, using the following logic:
       [ <oauth2> ]
 
   # Whether to enable HTTP2.
-  [ enable_http2: <bool> | default: true ]
+  [ enable_http2: <boolean> | default = true ]
 
   # Whether to enable HTTP3.
   # Note: When enable_http3 is true, valid_http_versions must not include HTTP/2.0
-  # as HTTP/3 and HTTP/2 cannot be used together. Additionally, when enable_http3
+  # or HTTP/1.1, only HTTP/3.0 is allowed. Additionally, when enable_http3
   # is true, enable_http2 must be set to false.
-  [ enable_http3: <bool> | default: false ]
+  [ enable_http3: <boolean> | default = false ]
 
   # The IP protocol of the HTTP probe (ip4, ip6).
   [ preferred_ip_protocol: <string> | default = "ip6" ]
@@ -233,7 +243,7 @@ regexp: <regex>,
 
 # The IP protocol of the TCP probe (ip4, ip6).
 [ preferred_ip_protocol: <string> | default = "ip6" ]
-[ ip_protocol_fallback: <boolean | default = true> ]
+[ ip_protocol_fallback: <boolean> | default = true ]
 
 # The source IP address.
 [ source_ip_address: <string> ]
@@ -246,7 +256,7 @@ regexp: <regex>,
 # "send" and "labels.value" can contain values matched by "expect" (such as "${1}");
 # "starttls" upgrades TCP connection to TLS.
 query_response:
-  [ - [ [ expect: <string> ],
+  [ - [ [ expect: <regex> ],
         [ expect_bytes: <string> ],
         [ labels:
           - [ name: <string>
@@ -254,12 +264,12 @@ query_response:
             ], ...
         ],
         [ send: <string> ],
-        [ starttls: <boolean | default = false> ]
+        [ starttls: <boolean> | default = false ]
       ], ...
   ]
 
 # Whether or not TLS is used when the connection is initiated.
-[ tls: <boolean | default = false> ]
+[ tls: <boolean> | default = false ]
 
 # Configuration for TLS protocol of TCP probe.
 tls_config:
@@ -285,7 +295,7 @@ tls_config:
 # "send" and "labels.value" can contain values matched by "expect" (such as "${1}");
 # "starttls" upgrades connection to TLS.
 query_response:
-  [ - [ [ expect: <string> ],
+  [ - [ [ expect: <regex> ],
         [ expect_bytes: <string> ],
         [ labels:
           - [ name: <string>
@@ -293,12 +303,12 @@ query_response:
             ], ...
         ],
         [ send: <string> ],
-        [ starttls: <boolean | default = false> ]
+        [ starttls: <boolean> | default = false ]
       ], ...
   ]
 
 # Whether or not TLS is used when the connection is initiated.
-[ tls: <boolean | default = false> ]
+[ tls: <boolean> | default = false ]
 
 # Configuration for TLS protocol of unix socket probe.
 tls_config:
@@ -318,7 +328,7 @@ tls_config:
 
 # The IP protocol of the DNS probe (ip4, ip6).
 [ preferred_ip_protocol: <string> | default = "ip6" ]
-[ ip_protocol_fallback: <boolean | default = true> ]
+[ ip_protocol_fallback: <boolean> | default = true ]
 
 # The source IP address.
 [ source_ip_address: <string> ]
@@ -326,7 +336,7 @@ tls_config:
 [ transport_protocol: <string> | default = "udp" ] # udp, tcp
 
 # Whether to use DNS over TLS. This only works with TCP.
-[ dns_over_tls: <boolean | default = false> ]
+[ dns_over_tls: <boolean> | default = false ]
 
 # Configuration for TLS protocol of DNS over TLS probe.
 tls_config:
@@ -394,13 +404,14 @@ validate_additional_rrs:
 
 # The IP protocol of the ICMP probe (ip4, ip6).
 [ preferred_ip_protocol: <string> | default = "ip6" ]
-[ ip_protocol_fallback: <boolean | default = true> ]
+[ ip_protocol_fallback: <boolean> | default = true ]
 
 # The source IP address.
 [ source_ip_address: <string> ]
 
 # Set the DF-bit in the IP-header. Only works with ip4, on *nix systems and
-# requires raw sockets (i.e. root or CAP_NET_RAW on Linux).
+# requires raw sockets (i.e. root or CAP_NET_RAW on Linux). Setting it to true
+# is rejected at load time on Windows.
 [ dont_fragment: <boolean> | default = false ]
 
 # The size of the payload.
@@ -409,7 +420,7 @@ validate_additional_rrs:
 # TTL of outbound packets. Value must be in the range [0, 255]. Can be used
 # to test reachability of a target within a given number of hops, for example,
 # to determine when network routing has changed.
-[ ttl: <int> ]
+[ ttl: <int> | default = 64 ]
 
 ```
 
@@ -430,7 +441,7 @@ metadata:
   ], ...
 
 # Whether to connect to the endpoint with TLS.
-[ tls: <boolean | default = false> ]
+[ tls: <boolean> | default = false ]
 
 # Configuration for TLS protocol of gRPC probe.
 tls_config:
@@ -451,7 +462,6 @@ http_config:
   [ <http_client_config> ]
 
 # The HTTP headers set for the probe.
-# The HTTP headers set for the probe.
 headers:
   [ <string>:
     [ values: [<string>, ...] ],
@@ -465,15 +475,15 @@ headers:
 query_response:
   [ - [ expect: <regex> ],
         [ send: <string> ],
-        [ starttls: <boolean | default = false> ]
+        [ starttls: <boolean> | default = false ]
       ], ...
   ]
 
-  # The IP protocol of the Websocket probe (ip4, ip6).
-  [ preferred_ip_protocol: <string> | default = "ip6" ]
+# The IP protocol of the Websocket probe (ip4, ip6).
+[ preferred_ip_protocol: <string> | default = "ip6" ]
 
-  # Fallback to the other IP protocol if the `preferred_ip_protocol` fails.
-  [ ip_protocol_fallback: <boolean> | default = true ]
+# Fallback to the other IP protocol if the `preferred_ip_protocol` fails.
+[ ip_protocol_fallback: <boolean> | default = true ]
 
 ```
 
@@ -481,6 +491,9 @@ query_response:
 
 ```yml
   # The HTTP basic authentication credentials.
+  # At most one of `basic_auth`, `authorization` and `oauth2` can be set.
+  # `username` and `username_file` are mutually exclusive, and so are
+  # `password` and `password_file`.
   basic_auth:
     [ username: <string> ]
     [ password: <secret> ]
@@ -490,8 +503,9 @@ query_response:
   # Sets the `Authorization` header on every request with
   # the configured credentials.
   authorization:
-    # Sets the authentication type of the request.
-    [ type: <string> | default: Bearer ]
+    # Sets the authentication type of the request. It cannot be `basic`, use
+    # `basic_auth` instead.
+    [ type: <string> | default = "Bearer" ]
     # Sets the credentials of the request. It is mutually exclusive with
     # `credentials_file`.
     [ credentials: <secret> ]
@@ -500,11 +514,13 @@ query_response:
     [ credentials_file: <filename> ]
 
   # OAuth 2.0 configuration to use to connect to the targets.
+  # Not supported by the websocket prober and ignored.
   oauth2:
     [ <oauth2> ]
 
   # Whether to enable HTTP2.
-  [ enable_http2: <bool> | default: true ]
+  # Not supported by the websocket prober and ignored.
+  [ enable_http2: <boolean> | default = true ]
 
   # Configuration for TLS protocol of HTTP probe.
   tls_config:
@@ -516,13 +532,14 @@ query_response:
   # that should be excluded from proxying. IP and domain names can
   # contain port numbers.
   [ no_proxy: <string> ]
-  # Use proxy URL indicated by environment variables (HTTP_PROXY, https_proxy, HTTPs_PROXY, https_proxy, and no_proxy)
-  [ proxy_from_environment: <bool> | default: false ]
+  # Use proxy URL indicated by environment variables (HTTP_PROXY, HTTPS_PROXY and NO_PROXY, or their lowercase forms).
+  [ proxy_from_environment: <boolean> | default = false ]
   # Specifies headers to send to proxies during CONNECT requests.
   [ proxy_connect_header:
     [ <string>: [<secret>, ...] ] ]
 
   # Whether or not the probe will follow any redirects.
+  # Not supported by the websocket prober and ignored.
   [ follow_redirects: <boolean> | default = true ]
 ```
 
@@ -541,6 +558,7 @@ query_response:
 [ ca: <string> ]
 
 # The client cert file for the targets.
+# A client cert and a client key must be set together.
 [ cert_file: <filename> ]
 
 # Text of the client cert for the targets.
@@ -559,14 +577,14 @@ query_response:
 
 # Minimum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
 # 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
-# If unset, Prometheus will use Go default minimum version, which is TLS 1.2.
+# If unset, blackbox_exporter will use the Go default minimum version, which is TLS 1.2.
 # See MinVersion in https://pkg.go.dev/crypto/tls#Config.
 [ min_version: <string> ]
 
 # Maximum acceptable TLS version. Accepted values: TLS10 (TLS 1.0), TLS11 (TLS
 # 1.1), TLS12 (TLS 1.2), TLS13 (TLS 1.3).
 # Can be used to test for the presence of insecure TLS versions.
-# If unset, Prometheus will use Go default maximum version, which is TLS 1.3.
+# If unset, blackbox_exporter will use the Go default maximum version, which is TLS 1.3.
 # See MaxVersion in https://pkg.go.dev/crypto/tls#Config.
 [ max_version: <string> ]
 ```
@@ -615,7 +633,7 @@ client_id: <string>
 # The `aud` claim of the JWT. Defaults to `token_url`.
 [ audience: <string> ]
 
-# Extra claims added to the JWT.
+# Extra claims added to the JWT. Values can be any YAML type.
 claims:
   [ <string>: <value> ... ]
 
@@ -626,7 +644,7 @@ scopes:
 # The URL to fetch the token from.
 token_url: <string>
 
-# Optional parameters to append to the token URL.
+# Optional parameters to add to the token request body.
 endpoint_params:
   [ <string>: <string> ... ]
 
