@@ -700,6 +700,38 @@ func TestRedirectNotFollowed(t *testing.T) {
 	}
 }
 
+func TestRedirectNotFollowedBodyMatch(t *testing.T) {
+	const redirectBody = "Please log in"
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", "/login")
+		w.WriteHeader(http.StatusFound)
+		fmt.Fprint(w, redirectBody)
+	}))
+	defer ts.Close()
+
+	// Do not follow redirect, the 302 body should still be checked.
+	registry := prometheus.NewRegistry()
+	testCTX, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	result := ProbeHTTP(testCTX, ts.URL,
+		config.Module{Timeout: time.Second, HTTP: config.HTTPProbe{IPProtocolFallback: true, HTTPClientConfig: pconfig.HTTPClientConfig{FollowRedirects: false}, ValidStatusCodes: []int{302}, FailIfBodyNotMatchesRegexp: []config.Regexp{config.MustNewRegexp(redirectBody)}}}, registry, promslog.NewNopLogger())
+	if !result {
+		t.Fatal("Redirect body match test failed unexpectedly")
+	}
+
+	mfs, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedResults := map[string]float64{
+		"probe_http_redirects":                1,
+		"probe_http_status_code":              302,
+		"probe_failed_due_to_regex":           0,
+		"probe_http_uncompressed_body_length": float64(len(redirectBody)),
+	}
+	checkRegistryResults(expectedResults, mfs, t)
+}
+
 // TestRedirectionLimit verifies that the probe stops following
 // redirects after some limit
 func TestRedirectionLimit(t *testing.T) {

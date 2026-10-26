@@ -488,7 +488,12 @@ func ProbeHTTP(ctx context.Context, target string, module config.Module, registr
 	client.CheckRedirect = func(r *http.Request, via []*http.Request) error {
 		logger.Info("Received redirect", "location", r.Response.Header.Get("Location"))
 		redirects = len(via)
-		if redirects > 10 || !httpConfig.HTTPClientConfig.FollowRedirects {
+		if !httpConfig.HTTPClientConfig.FollowRedirects {
+			logger.Info("Not following redirect")
+			// Keep the 3xx body open so body checks can read it.
+			return http.ErrUseLastResponse
+		}
+		if redirects > 10 {
 			logger.Info("Not following redirect")
 			return errors.New("don't follow redirects")
 		}
