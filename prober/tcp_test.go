@@ -22,6 +22,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"runtime"
@@ -812,6 +813,73 @@ func TestTCPConnectionQueryResponseByteModeFail(t *testing.T) {
 		"probe_failed_due_to_bytes": 1,
 	}
 	checkRegistryResults(expectedResults, mfs, t)
+}
+
+func TestQueryResponseExpectBytesReads(t *testing.T) {
+	tests := []struct {
+		name          string
+		writes        []string
+		queryResponse []config.QueryResponse
+	}{
+		{
+			name:          "single write",
+			writes:        []string{"not-a-line"},
+			queryResponse: []config.QueryResponse{{ExpectBytes: "not-a-line"}},
+		},
+		{
+			name:          "split write",
+			writes:        []string{"AB", "CD"},
+			queryResponse: []config.QueryResponse{{ExpectBytes: "ABCD"}},
+		},
+		{
+			name:          "expect then expect_bytes",
+			writes:        []string{"hello\nWORLD"},
+			queryResponse: []config.QueryResponse{{Expect: config.MustNewRegexp("^hello$")}, {ExpectBytes: "WORLD"}},
+		},
+		{
+			name:          "send then expect_bytes",
+			writes:        []string{"S"},
+			queryResponse: []config.QueryResponse{{Send: "\x00\x00\x00\x08\x04\xd2\x16\x2f"}, {ExpectBytes: "S"}},
+		},
+	}
+
+	for _, proberName := range []string{"tcp", "unix"} {
+		for _, test := range tests {
+			t.Run(proberName+"/"+test.name, func(t *testing.T) {
+				module := config.Module{
+					TCP:  config.TCPProbe{QueryResponse: test.queryResponse},
+					Unix: config.UnixProbe{QueryResponse: test.queryResponse},
+				}
+				// net.Pipe hands each write to a separate read, so split replies are deterministic.
+				client, server := net.Pipe()
+				defer client.Close()
+				defer server.Close()
+				go io.Copy(io.Discard, server)
+				go func() {
+					for _, w := range test.writes {
+						if _, err := server.Write([]byte(w)); err != nil {
+							return
+						}
+					}
+				}()
+
+				testCTX, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				registry := prometheus.NewRegistry()
+				if !probeQueryResponses(testCTX, "", client, module, proberName, registry, promslog.NewNopLogger()) {
+					t.Fatalf("%s module failed, expected success.", proberName)
+				}
+				mfs, err := registry.Gather()
+				if err != nil {
+					t.Fatal(err)
+				}
+				expectedResults := map[string]float64{
+					"probe_failed_due_to_bytes": 0,
+				}
+				checkRegistryResults(expectedResults, mfs, t)
+			})
+		}
+	}
 }
 
 func TestTCPConnectionProtocol(t *testing.T) {

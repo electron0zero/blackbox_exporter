@@ -19,6 +19,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 
@@ -44,6 +45,18 @@ func probeExpectInfo(registry *prometheus.Registry, qr *config.QueryResponse, by
 	)
 	registry.MustRegister(metric)
 	metric.WithLabelValues(values...).Set(1)
+}
+
+// readLine reads a line with the same semantics as bufio.ScanLines.
+func readLine(r *bufio.Reader) ([]byte, error) {
+	line, err := r.ReadSlice('\n')
+	if err == io.EOF && len(line) > 0 {
+		err = nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte("\r")), nil
 }
 
 func probeQueryResponses(ctx context.Context, target string, conn net.Conn, module config.Module, proberName string, registry *prometheus.Registry, logger *slog.Logger) bool {
@@ -110,34 +123,41 @@ func probeQueryResponses(ctx context.Context, target string, conn net.Conn, modu
 		checkCRL(ctx, &state, checkRevoked, nil, registry, logger)
 	}
 
-	scanner := bufio.NewScanner(conn)
+	// Shared by expect and expect_bytes so bytes buffered by one are seen by the other.
+	reader := bufio.NewReaderSize(conn, bufio.MaxScanTokenSize)
 	for i, qr := range queryResponses {
 		logger.Debug("Processing query response entry", "entry_number", i)
 		send := qr.Send
 		if qr.Expect.Regexp != nil {
 			var match []int
+			var line []byte
+			var err error
 			// Read lines until one of them matches the configured regexp.
-			for scanner.Scan() {
-				logger.Debug("Read line", "line", scanner.Text())
-				match = qr.Expect.FindSubmatchIndex(scanner.Bytes())
+			for {
+				line, err = readLine(reader)
+				if err != nil {
+					break
+				}
+				logger.Debug("Read line", "line", string(line))
+				match = qr.Expect.FindSubmatchIndex(line)
 				if match != nil {
-					logger.Debug("Regexp matched", "regexp", qr.Expect.Regexp, "line", scanner.Text())
+					logger.Debug("Regexp matched", "regexp", qr.Expect.Regexp, "line", string(line))
 					break
 				}
 			}
-			if scanner.Err() != nil {
-				logger.Error("Error reading from connection", "err", scanner.Err().Error())
+			if err != nil && err != io.EOF {
+				logger.Error("Error reading from connection", "err", err.Error())
 				return false
 			}
 			if match == nil {
 				probeFailedDueToRegex.Set(1)
-				logger.Error("Regexp did not match", "regexp", qr.Expect.Regexp, "line", scanner.Text())
+				logger.Error("Regexp did not match", "regexp", qr.Expect.Regexp, "line", string(line))
 				return false
 			}
 			probeFailedDueToRegex.Set(0)
-			send = string(qr.Expect.Expand(nil, []byte(send), scanner.Bytes(), match))
+			send = string(qr.Expect.Expand(nil, []byte(send), line, match))
 			if qr.Labels != nil {
-				probeExpectInfo(registry, &qr, scanner.Bytes(), match)
+				probeExpectInfo(registry, &qr, line, match)
 			}
 		}
 		if qr.ExpectBytes != "" {
@@ -145,18 +165,17 @@ func probeQueryResponses(ctx context.Context, target string, conn net.Conn, modu
 
 			// Try to read same number of bytes as expected.
 			data := make([]byte, len(expectBytes))
-			n, err := conn.Read(data)
+			n, err := io.ReadFull(reader, data)
+			if err == io.ErrUnexpectedEOF {
+				logger.Error("Read less data than expected", "expected", expectBytes, "bytes", data[:n])
+				return false
+			}
 			if err != nil {
 				logger.Error("Error reading from connection", "err", err)
 				return false
 			}
 
 			logger.Debug("Read bytes", "bytes", data)
-
-			if n < len(expectBytes) {
-				logger.Error("Read less data than expected", "expected", expectBytes, "bytes", data)
-				return false
-			}
 
 			if !bytes.Equal(expectBytes, data) {
 				probeFailedDueToBytes.Set(1)
@@ -196,7 +215,7 @@ func probeQueryResponses(ctx context.Context, target string, conn net.Conn, modu
 			}
 			logger.Debug("TLS Handshake (client) succeeded.")
 			conn = net.Conn(tlsConn)
-			scanner = bufio.NewScanner(conn)
+			reader = bufio.NewReaderSize(conn, bufio.MaxScanTokenSize)
 
 			// Get certificate expiry.
 			state := tlsConn.ConnectionState()
