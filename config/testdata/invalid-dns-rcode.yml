@@ -1,0 +1,7 @@
+modules:
+  dns_test:
+    prober: dns
+    timeout: 5s
+    dns:
+      query_name: example.com
+      valid_rcodes: [NOTARCODE]

@@ -1,0 +1,8 @@
+modules:
+  dns_test:
+    prober: dns
+    timeout: 5s
+    dns:
+      query_name: example.com
+      validate_additional_rrs:
+        fail_if_none_matches_regexp: [":["]

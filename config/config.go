@@ -540,6 +540,19 @@ func (s *DNSProbe) UnmarshalYAML(unmarshal func(any) error) error {
 			return fmt.Errorf("query type '%s' is not valid", s.QueryType)
 		}
 	}
+	for _, rcode := range s.ValidRcodes {
+		if _, ok := dns.StringToRcode[rcode]; !ok {
+			return fmt.Errorf("rcode '%s' is not valid", rcode)
+		}
+	}
+	switch s.TransportProtocol {
+	case "", "udp", "tcp":
+	default:
+		return fmt.Errorf("transport protocol '%s' is not valid", s.TransportProtocol)
+	}
+	if s.DNSOverTLS && s.TransportProtocol != "tcp" {
+		return errors.New("dns_over_tls requires transport_protocol tcp")
+	}
 
 	return nil
 }
@@ -585,6 +598,14 @@ func (s *DNSRRValidator) UnmarshalYAML(unmarshal func(any) error) error {
 	type plain DNSRRValidator
 	if err := unmarshal((*plain)(s)); err != nil {
 		return err
+	}
+	for _, res := range [][]string{s.FailIfMatchesRegexp, s.FailIfAllMatchRegexp, s.FailIfNotMatchesRegexp, s.FailIfNoneMatchesRegexp} {
+		for _, re := range res {
+			// Validate only, changing the field type would break the exported API.
+			if _, err := regexp.Compile(re); err != nil {
+				return fmt.Errorf("\"Could not compile regular expression\" regexp=\"%s\"", re)
+			}
+		}
 	}
 	return nil
 }

@@ -323,9 +323,10 @@ tls_config:
 # The source IP address.
 [ source_ip_address: <string> ]
 
-[ transport_protocol: <string> | default = "udp" ] # udp, tcp
+# The transport protocol, udp or tcp. Any other value is rejected when the config is loaded.
+[ transport_protocol: <string> | default = "udp" ]
 
-# Whether to use DNS over TLS. This only works with TCP.
+# Whether to use DNS over TLS. Requires transport_protocol: tcp, checked when the config is loaded.
 [ dns_over_tls: <boolean | default = false> ]
 
 # Configuration for TLS protocol of DNS over TLS probe.
@@ -340,10 +341,11 @@ query_name: <string>
 # Set the recursion desired (RD) flag in the request.
 [ recursion_desired: <boolean> | default = true ]
 
-# List of valid response codes.
+# List of valid response codes. Unknown names are rejected when the config is loaded.
 valid_rcodes:
   [ - <string> ... | default = "NOERROR" ]
 
+# Invalid regexps in any validate_*_rrs block are rejected when the config is loaded.
 validate_answer_rrs:
 
   fail_if_matches_regexp:

@@ -1,0 +1,8 @@
+modules:
+  dns_test:
+    prober: dns
+    timeout: 5s
+    dns:
+      query_name: example.com
+      dns_over_tls: true
+      transport_protocol: udp

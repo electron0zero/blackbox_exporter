@@ -61,6 +61,38 @@ func TestLoadBadConfigs(t *testing.T) {
 			want:  "error parsing config file: query type 'X' is not valid",
 		},
 		{
+			input: "testdata/invalid-dns-rcode.yml",
+			want:  "error parsing config file: rcode 'NOTARCODE' is not valid",
+		},
+		{
+			input: "testdata/invalid-dns-transport-protocol.yml",
+			want:  "error parsing config file: transport protocol 'sctp' is not valid",
+		},
+		{
+			input: "testdata/invalid-dns-over-tls-udp.yml",
+			want:  "error parsing config file: dns_over_tls requires transport_protocol tcp",
+		},
+		{
+			input: "testdata/invalid-dns-over-tls-default-transport.yml",
+			want:  "error parsing config file: dns_over_tls requires transport_protocol tcp",
+		},
+		{
+			input: "testdata/invalid-dns-answer-rrs-regexp.yml",
+			want:  `error parsing config file: "Could not compile regular expression" regexp=":["`,
+		},
+		{
+			input: "testdata/invalid-dns-answer-rrs-not-matches-regexp.yml",
+			want:  `error parsing config file: "Could not compile regular expression" regexp=":["`,
+		},
+		{
+			input: "testdata/invalid-dns-authority-rrs-regexp.yml",
+			want:  `error parsing config file: "Could not compile regular expression" regexp=":["`,
+		},
+		{
+			input: "testdata/invalid-dns-additional-rrs-regexp.yml",
+			want:  `error parsing config file: "Could not compile regular expression" regexp=":["`,
+		},
+		{
 			input: "testdata/invalid-http-header-match.yml",
 			want:  "error parsing config file: regexp must be set for HTTP header matchers",
 		},
