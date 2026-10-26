@@ -231,7 +231,7 @@ func run() int {
 			if !r.Success {
 				success = "<strong>Failure</strong>"
 			}
-			fmt.Fprintf(w, "<tr><td>%s</td><td>%s</td><td>%s</td><td><a href='logs?id=%d'>Logs</a></td></td>",
+			fmt.Fprintf(w, "<tr><td>%s</td><td>%s</td><td>%s</td><td><a href='logs?id=%d'>Logs</a></td></tr>",
 				html.EscapeString(r.ModuleName), html.EscapeString(r.Target), success, r.ID)
 		}
 
