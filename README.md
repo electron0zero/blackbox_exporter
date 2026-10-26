@@ -5,7 +5,7 @@
 [![Docker Pulls](https://img.shields.io/docker/pulls/prom/blackbox-exporter.svg?maxAge=604800)][hub]
 
 The blackbox exporter allows blackbox probing of endpoints over
-HTTP, HTTPS, DNS, TCP, ICMP and gRPC.
+HTTP, HTTPS, DNS, TCP, ICMP, gRPC, unix sockets and WebSocket.
 
 ## Running this software
 
@@ -33,7 +33,8 @@ Then:
 Visiting [http://localhost:9115/probe?target=google.com&module=http_2xx](http://localhost:9115/probe?target=google.com&module=http_2xx)
 will return metrics for a HTTP probe against google.com. The `probe_success`
 metric indicates if the probe succeeded. Adding a `debug=true` parameter
-will return debug information for that probe.
+will return debug information for that probe. If `module` is omitted, it
+defaults to `http_2xx`.
 
 The probe will also return timing metrics for measuring how long it takes to
 probe the target.
@@ -64,7 +65,7 @@ Note that the TLS and basic authentication settings affect all HTTP endpoints:
 
 The blackbox_exporter has a primary structured logger that is used for logs related to the application itself. Application logs can be controlled by `--log.level`, which sets the log level for messages to output, valid levels are `debug`, `info`, `warn`, and `error`.
 
-The blackbox_exporter also maintains a second, fully independent structured logger that is used specifically for logging related to the probers (`http`, `tcp`, `icmp`, `dns`, `grpc`) and their output.
+The blackbox_exporter also maintains a second, fully independent structured logger that is used specifically for logging related to the probers (`http`, `tcp`, `icmp`, `dns`, `grpc`, `unix`, `websocket`) and their output.
 The scrape probe logger defaults to `info` level filtering, similar to the primary logger. Prober logs can be controlled with `--log.prober`
 
 > _Note_
@@ -177,15 +178,45 @@ The interval can be customized with the `--config.auto-reload-interval` flag, wh
 
 To view all available command-line flags, run `./blackbox_exporter -h`.
 
+| Flag | Default | Description |
+|---|---|---|
+| `--config.file` | `blackbox.yml` | Blackbox exporter configuration file. |
+| `--config.check` | `false` | Validate the config file and then exit. |
+| `--config.enable-auto-reload` | `false` | Reload the configuration file automatically when it changes. |
+| `--config.auto-reload-interval` | `30` | Interval in seconds for checking the configuration file for changes. |
+| `--timeout-offset` | `0.5` | Offset in seconds to subtract from the scrape timeout. |
+| `--history.limit` | `100` | The maximum number of probe results to keep in the history. |
+| `--log.level` | `info` | Application log level. One of: `debug`, `info`, `warn`, `error`. |
+| `--log.format` | `logfmt` | Log format. One of: `logfmt`, `json`. |
+| `--log.prober` | `info` | Log level for probe logs. One of: `debug`, `info`, `warn`, `error`. |
+| `--web.listen-address` | `:9115` | Address to listen on. Repeatable for multiple addresses. |
+| `--web.config.file` | `""` | Path to a [web configuration file](https://github.com/prometheus/exporter-toolkit/blob/master/docs/web-configuration.md) that can enable TLS or authentication. |
+| `--web.systemd-socket` | `false` | Use systemd socket activation listeners instead of port listeners (Linux only). |
+| `--web.external-url` | | The URL under which the exporter is externally reachable, for example behind a reverse proxy. |
+| `--web.route-prefix` | path of `--web.external-url` | Prefix for the internal routes of web endpoints. |
+| `--version` | | Show application version. |
+
+The exporter serves these HTTP endpoints:
+
+* `/`: landing page with example links and the recent probe history.
+* `/probe?target=<target>&module=<module>`: runs a probe and returns its metrics. Add `&debug=true` for logs, metrics and module configuration as plain text.
+* `/metrics`: the exporter's own metrics.
+* `/config`: the loaded configuration as YAML.
+* `/logs?id=<id>` or `/logs?target=<target>&module=<module>`: the debug output of a recent probe from the history.
+* `/-/healthy`: returns 200 while the exporter is running.
+* `/-/reload`: reloads the configuration file on a POST request.
+
+See [troubleshooting](docs/troubleshooting.md) for common probe problems.
+
 To specify which [configuration file](CONFIGURATION.md) to load, use the `--config.file` flag.
 
 Additionally, an [example configuration](example.yml) is also available.
 
-HTTP, HTTPS (via the `http` prober), DNS, TCP socket, ICMP and gRPC (see permissions section) are currently supported.
+HTTP, HTTPS (via the `http` prober), DNS, TCP socket, ICMP (see permissions section), gRPC, unix socket and WebSocket are currently supported.
 Additional modules can be defined to meet your needs.
 
 The timeout of each probe is automatically determined from the `scrape_timeout` in the [Prometheus config](https://prometheus.io/docs/operating/configuration/#configuration-file), slightly reduced to allow for network delays. 
-This can be further limited by the `timeout` in the Blackbox exporter config file. If neither is specified, it defaults to 120 seconds.
+This can be further limited by the `timeout` in the Blackbox exporter config file. If neither is specified, it defaults to 119.5 seconds (120 seconds minus `--timeout-offset`).
 
 ## Prometheus Configuration
 
