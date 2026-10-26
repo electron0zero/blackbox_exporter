@@ -245,6 +245,7 @@ regexp: <regex>,
 # "send" sends some content;
 # "send" and "labels.value" can contain values matched by "expect" (such as "${1}");
 # "starttls" upgrades TCP connection to TLS.
+# At most one step may use "starttls", and not when "tls" is true.
 query_response:
   [ - [ [ expect: <string> ],
         [ expect_bytes: <string> ],
@@ -284,6 +285,7 @@ tls_config:
 # "send" sends some content;
 # "send" and "labels.value" can contain values matched by "expect" (such as "${1}");
 # "starttls" upgrades connection to TLS.
+# At most one step may use "starttls", and not when "tls" is true.
 query_response:
   [ - [ [ expect: <string> ],
         [ expect_bytes: <string> ],

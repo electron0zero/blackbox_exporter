@@ -1,0 +1,8 @@
+modules:
+  unix_test:
+    prober: unix
+    timeout: 5s
+    unix:
+      query_response:
+        - starttls: true
+        - starttls: true

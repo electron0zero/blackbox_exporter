@@ -554,7 +554,7 @@ func (s *TCPProbe) UnmarshalYAML(unmarshal func(any) error) error {
 	if s.CheckRevoked && !s.TLS && !usesStartTLS(s.QueryResponse) {
 		return errors.New("check_revoked cannot be used when tls is false and no query_response step uses starttls")
 	}
-	return nil
+	return validateStartTLS(s.TLS, s.QueryResponse)
 }
 
 // usesStartTLS reports whether any query_response step upgrades the connection to TLS.
@@ -567,6 +567,23 @@ func usesStartTLS(qrs []QueryResponse) bool {
 	return false
 }
 
+// validateStartTLS rejects a TLS upgrade on a connection that is already TLS.
+func validateStartTLS(useTLS bool, qrs []QueryResponse) error {
+	n := 0
+	for _, qr := range qrs {
+		if qr.StartTLS {
+			n++
+		}
+	}
+	if useTLS && n > 0 {
+		return errors.New("starttls cannot be used when tls is true")
+	}
+	if n > 1 {
+		return errors.New("query_response cannot contain more than one starttls step")
+	}
+	return nil
+}
+
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
 func (s *UnixProbe) UnmarshalYAML(unmarshal func(any) error) error {
 	*s = DefaultUnixProbe
@@ -577,7 +594,7 @@ func (s *UnixProbe) UnmarshalYAML(unmarshal func(any) error) error {
 	if s.CheckRevoked && !s.TLS && !usesStartTLS(s.QueryResponse) {
 		return errors.New("check_revoked cannot be used when tls is false and no query_response step uses starttls")
 	}
-	return nil
+	return validateStartTLS(s.TLS, s.QueryResponse)
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.

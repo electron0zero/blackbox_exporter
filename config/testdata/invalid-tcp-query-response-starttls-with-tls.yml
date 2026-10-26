@@ -1,0 +1,8 @@
+modules:
+  tcp_test:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      tls: true
+      query_response:
+        - starttls: true
