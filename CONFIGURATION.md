@@ -464,8 +464,7 @@ headers:
 # "send" sends a message (can use values matched by "expect" such as "${1}").
 query_response:
   [ - [ expect: <regex> ],
-        [ send: <string> ],
-        [ starttls: <boolean | default = false> ]
+        [ send: <string> ]
       ], ...
   ]
 

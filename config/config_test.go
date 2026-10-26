@@ -125,6 +125,18 @@ func TestLoadBadConfigs(t *testing.T) {
 			want:  `error parsing config file: "Could not compile regular expression" regexp=":["`,
 		},
 		{
+			input: "testdata/invalid-websocket-query-response-expect-bytes.yml",
+			want:  `error parsing config file: expect_bytes is not supported by the websocket prober`,
+		},
+		{
+			input: "testdata/invalid-websocket-query-response-starttls.yml",
+			want:  `error parsing config file: starttls is not supported by the websocket prober`,
+		},
+		{
+			input: "testdata/invalid-websocket-query-response-labels.yml",
+			want:  `error parsing config file: labels is not supported by the websocket prober`,
+		},
+		{
 			input: "testdata/invalid-http-body-config.yml",
 			want:  `error parsing config file: setting body and body_file both are not allowed`,
 		},

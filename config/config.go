@@ -648,6 +648,19 @@ func (s *WebsocketProbe) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 
+	// QueryResponse is shared with TCP, so reject fields websocket would silently ignore.
+	for _, qr := range s.QueryResponse {
+		if qr.ExpectBytes != "" {
+			return errors.New("expect_bytes is not supported by the websocket prober")
+		}
+		if qr.StartTLS {
+			return errors.New("starttls is not supported by the websocket prober")
+		}
+		if len(qr.Labels) > 0 {
+			return errors.New("labels is not supported by the websocket prober")
+		}
+	}
+
 	return s.HTTPClientConfig.Validate()
 }
 
