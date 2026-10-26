@@ -1,0 +1,9 @@
+modules:
+  websocket_test:
+    prober: websocket
+    timeout: 5s
+    websocket:
+      http_config:
+        proxy_url: http://127.0.0.1:3128
+        proxy_connect_header:
+          X-Proxy-Token: ["secret"]

@@ -83,16 +83,30 @@ func ProbeWebsocket(ctx context.Context, target string, module config.Module, re
 
 	// shared variable to capture connect duration from the closure
 	var connectDuration float64
+	var proxied bool
+	proxyFunc := module.Websocket.HTTPClientConfig.Proxy()
 	dialer := websocket.Dialer{
 		TLSClientConfig: tlsConfig,
+		Proxy: func(req *http.Request) (*url.URL, error) {
+			if proxyFunc == nil {
+				return nil, nil
+			}
+			proxyURL, err := proxyFunc(req)
+			proxied = proxyURL != nil
+			return proxyURL, err
+		},
 		NetDialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			// use chosen protocol to dial but use ip as we've resolved the address
-			_, port, err := net.SplitHostPort(addr)
-			if err != nil {
-				return nil, err
+			// Dial the proxy as given, it resolves the target itself.
+			if !proxied {
+				// use chosen protocol to dial but use ip as we've resolved the address
+				_, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				addr = net.JoinHostPort(ip.String(), port)
 			}
 			start := time.Now()
-			conn, err := (&net.Dialer{}).DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
 			if err == nil {
 				connectDuration = time.Since(start).Seconds()
 				durationGaugeVec.WithLabelValues("connect").Add(connectDuration)

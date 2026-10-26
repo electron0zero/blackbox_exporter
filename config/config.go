@@ -648,6 +648,11 @@ func (s *WebsocketProbe) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 
+	// The websocket dialer cannot send custom headers on the proxy CONNECT request.
+	if len(s.HTTPClientConfig.ProxyConnectHeader) > 0 {
+		return errors.New("proxy_connect_header is not supported by the websocket prober")
+	}
+
 	return s.HTTPClientConfig.Validate()
 }
 

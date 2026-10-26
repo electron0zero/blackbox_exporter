@@ -518,9 +518,7 @@ query_response:
   [ no_proxy: <string> ]
   # Use proxy URL indicated by environment variables (HTTP_PROXY, https_proxy, HTTPs_PROXY, https_proxy, and no_proxy)
   [ proxy_from_environment: <bool> | default: false ]
-  # Specifies headers to send to proxies during CONNECT requests.
-  [ proxy_connect_header:
-    [ <string>: [<secret>, ...] ] ]
+  # `proxy_connect_header` is not supported and is rejected at load time.
 
   # Whether or not the probe will follow any redirects.
   [ follow_redirects: <boolean> | default = true ]

@@ -16,11 +16,15 @@ package prober
 import (
 	"context"
 	"encoding/base64"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
 	promconfig "github.com/prometheus/common/config"
@@ -312,5 +316,72 @@ func TestProbeWebsocket(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestProbeWebsocketProxy(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("Failed to upgrade connection: %v", err)
+			return
+		}
+		conn.Close()
+	}))
+	defer target.Close()
+	targetURL, err := url.Parse(target.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse target URL: %v", err)
+	}
+
+	var mu sync.Mutex
+	var connectHosts []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodConnect {
+			http.Error(w, "only CONNECT is supported", http.StatusMethodNotAllowed)
+			return
+		}
+		mu.Lock()
+		connectHosts = append(connectHosts, r.Host)
+		mu.Unlock()
+		upstream, err := net.Dial("tcp", r.Host)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer upstream.Close()
+		w.WriteHeader(http.StatusOK)
+		client, buf, err := http.NewResponseController(w).Hijack()
+		if err != nil {
+			t.Errorf("Failed to hijack proxy connection: %v", err)
+			return
+		}
+		defer client.Close()
+		go io.Copy(upstream, buf)
+		io.Copy(client, upstream)
+	}))
+	defer proxy.Close()
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatalf("Failed to parse proxy URL: %v", err)
+	}
+
+	module := config.Module{
+		Websocket: config.WebsocketProbe{
+			IPProtocol: "ip4",
+			HTTPClientConfig: promconfig.HTTPClientConfig{
+				ProxyConfig: promconfig.ProxyConfig{ProxyURL: promconfig.URL{URL: proxyURL}},
+			},
+		},
+	}
+	wsURL := strings.Replace(target.URL, "http://", "ws://", 1)
+	if !ProbeWebsocket(context.Background(), wsURL, module, prometheus.NewRegistry(), promslog.NewNopLogger()) {
+		t.Fatal("Websocket probe through proxy failed")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(connectHosts) != 1 || connectHosts[0] != targetURL.Host {
+		t.Fatalf("Expected one CONNECT to %s through the proxy, got %v", targetURL.Host, connectHosts)
 	}
 }

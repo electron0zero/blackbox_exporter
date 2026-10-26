@@ -125,6 +125,10 @@ func TestLoadBadConfigs(t *testing.T) {
 			want:  `error parsing config file: "Could not compile regular expression" regexp=":["`,
 		},
 		{
+			input: "testdata/invalid-websocket-proxy-connect-header.yml",
+			want:  `error parsing config file: proxy_connect_header is not supported by the websocket prober`,
+		},
+		{
 			input: "testdata/invalid-http-body-config.yml",
 			want:  `error parsing config file: setting body and body_file both are not allowed`,
 		},
