@@ -203,6 +203,17 @@ func TestTCPConnectionWithTLS(t *testing.T) {
 		"probe_tls_cipher_info":          1,
 	}
 	checkRegistryResults(expectedResults, mfs, t)
+
+	// Check HELP text
+	expectedHelp := map[string]string{
+		"probe_ssl_earliest_cert_expiry": "Returns earliest SSL cert expiry in the presented chain in unixtime",
+		"probe_tls_version_info":         "Returns the TLS version used or unknown when unrecognized",
+	}
+	for _, mf := range mfs {
+		if want, ok := expectedHelp[mf.GetName()]; ok && mf.GetHelp() != want {
+			t.Errorf("Expected HELP %q for %s, got %q", want, mf.GetName(), mf.GetHelp())
+		}
+	}
 }
 
 func TestTCPConnectionWithTLSAndVerifiedCertificateChain(t *testing.T) {
