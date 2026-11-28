@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -190,4 +191,49 @@ func post(t *testing.T, u string) (int, string) {
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(b)
+}
+
+// shutdownConfig keeps a probe in flight, because testserver never sends the expected data.
+const shutdownConfig = `
+modules:
+  tcp_waits:
+    prober: tcp
+    timeout: 2s
+    tcp:
+      query_response:
+        - expect: "^never"
+`
+
+// TestGracefulShutdown checks that SIGTERM lets an in-flight probe finish.
+func TestGracefulShutdown(t *testing.T) {
+	require.NoError(t, os.WriteFile(filepath.Join(runDir, "config", "shutdown.yml"), []byte(shutdownConfig), 0o644))
+	container := project + "-shutdown"
+	base := "http://" + startExporter(t, "shutdown", nil, "--config.file=/config/shutdown.yml")
+	waitStatus(t, httpClient, base+"/-/healthy", http.StatusOK)
+
+	type result struct {
+		body string
+		err  error
+	}
+	probe := make(chan result, 1)
+	go func() {
+		q := url.Values{"module": {"tcp_waits"}, "target": {"testserver:30080"}}
+		_, body, err := get(httpClient, base+"/probe?"+q.Encode())
+		probe <- result{body, err}
+	}()
+
+	// An open connection to testserver means the probe is in flight.
+	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+		out, err := exec.CommandContext(t.Context(), "docker", "exec", container, "netstat", "-tn").CombinedOutput()
+		require.NoError(ct, err, string(out))
+		require.Regexp(ct, `:30080 +ESTABLISHED`, string(out))
+	}, 10*time.Second, 50*time.Millisecond, "the probe never reached testserver")
+
+	// docker stop sends SIGTERM to the exporter.
+	docker(t, "stop", "-t", "15", container)
+
+	res := <-probe
+	require.NoError(t, res.err, "the in-flight probe was cut off by shutdown")
+	require.Contains(t, res.body, "probe_success 0")
+	require.Equal(t, "0", strings.TrimSpace(docker(t, "inspect", "-f", "{{.State.ExitCode}}", container)))
 }
